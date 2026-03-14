@@ -2,10 +2,9 @@
  * Merkezi API katmanı — Anthropic Claude çağrıları, hata ve API key yönetimi
  */
 
-/** Geliştirmede proxy kullan (CORS yok); production'da doğrudan Anthropic */
-const ANTHROPIC_URL = import.meta.env.DEV
-  ? "/api/anthropic/v1/messages"
-  : "https://api.anthropic.com/v1/messages";
+/** Geliştirmede Vite proxy; production'da Vercel /api/chat (CORS yok) */
+const USE_PROXY = import.meta.env.DEV;
+const ANTHROPIC_URL = USE_PROXY ? "/api/anthropic/v1/messages" : "/api/chat";
 const ANTHROPIC_VERSION = "2023-06-01";
 const STORAGE_KEY = "architect_ai_anthropic_api_key";
 
@@ -59,15 +58,25 @@ export async function anthropicChat(
     };
     if (options?.system) body.system = options.system;
 
-    const r = await fetch(ANTHROPIC_URL, {
+    const fetchOpts: RequestInit = {
       method: "POST",
-      headers: {
+      headers: { "Content-Type": "application/json" },
+      body: "",
+    };
+
+    if (USE_PROXY) {
+      fetchOpts.headers = {
         "Content-Type": "application/json",
         "x-api-key": key,
         "anthropic-version": ANTHROPIC_VERSION,
-      },
-      body: JSON.stringify(body),
-    });
+      };
+      fetchOpts.body = JSON.stringify(body);
+    } else {
+      (body as Record<string, unknown>).apiKey = key;
+      fetchOpts.body = JSON.stringify(body);
+    }
+
+    const r = await fetch(ANTHROPIC_URL, fetchOpts);
 
     const j = await r.json();
 
