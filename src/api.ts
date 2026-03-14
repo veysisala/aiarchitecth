@@ -135,3 +135,49 @@ export async function generateImage(prompt: string): Promise<ImageResult> {
   const dataUrl = "data:image/svg+xml," + encodeURIComponent(svg);
   return { ok: true, url: dataUrl };
 }
+
+// ─── Kie AI görsel üretimi (gpt4o-image) ───
+const KIE_STORAGE_KEY = "architect_ai_kie_api_key";
+
+function getKieKey(): string {
+  try {
+    return (localStorage.getItem(KIE_STORAGE_KEY) || "").trim();
+  } catch {
+    return "";
+  }
+}
+
+export function hasKieKey(): boolean {
+  return getKieKey().length > 0;
+}
+
+export function setKieKey(key: string): void {
+  const v = (key || "").trim();
+  try {
+    if (v) localStorage.setItem(KIE_STORAGE_KEY, v);
+    else localStorage.removeItem(KIE_STORAGE_KEY);
+  } catch (_) {}
+}
+
+/** Kie AI (gpt4o-image) ile görsel üretir; /api/kie-image üzerinden. */
+export async function generateImageKie(prompt: string): Promise<ImageResult> {
+  const key = getKieKey();
+  if (!key) {
+    return { ok: false, error: "Kie AI için API anahtarı girin (🔑 menüden)." };
+  }
+  try {
+    const r = await fetch("/api/kie-image", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ apiKey: key, prompt: prompt.slice(0, 4000) }),
+    });
+    const j = await r.json();
+    if (!r.ok) return { ok: false, error: j.error || j.msg || `HTTP ${r.status}` };
+    const url = j.url;
+    if (!url) return { ok: false, error: "Görsel URL alınamadı." };
+    return { ok: true, url };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "Bağlantı hatası.";
+    return { ok: false, error: msg };
+  }
+}
