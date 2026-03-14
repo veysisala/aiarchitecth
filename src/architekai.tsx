@@ -1,7 +1,7 @@
 import React,{useState,useRef,useEffect,useCallback,Component} from "react";
 import * as THREE from 'three';
 import {BarChart,Bar,XAxis,YAxis,Tooltip,ResponsiveContainer,PieChart,Pie,Cell,LineChart,Line,RadarChart,Radar,PolarGrid,PolarAngleAxis} from 'recharts';
-import {anthropicChat,parseJsonSafe,hasApiKey,setApiKey,clearApiKey} from './api';
+import {anthropicChat,parseJsonSafe,hasApiKey,setApiKey,clearApiKey,generateImage} from './api';
 import {listProjects,saveProject,loadProject,deleteProject} from './storage';
 
 // ══════════════════════════════════════
@@ -745,6 +745,9 @@ function App(){
   const [projectsList,setProjectsList]=useState(listProjects());
   const [apiKeyInput,setApiKeyInput]=useState("");
   const [,forceRefresh]=useState(0);
+  const [generatedImageUrl,setGeneratedImageUrl]=useState<string|null>(null);
+  const [imageLoad,setImageLoad]=useState(false);
+  const [imageError,setImageError]=useState<string|null>(null);
   const t=I18N[lang]||I18N.TR;
   const updateData=(k,v)=>setData(prev=>({...prev,[k]:v}));
   const handleSave=()=>{if(saveName.trim()){saveProject(saveName.trim(),data,res);setProjectsList(listProjects());setShowSaveModal(false);setSaveName("");}};
@@ -756,16 +759,16 @@ function App(){
   },[]);
   const genAI=useCallback(async()=>{
     setLoad(true);
-    const prompt=`Mimari proje özeti. Tip: ${data.type}, Alan: ${data.area}m², Kat: ${data.floors}, Stil: ${data.style}, Malzeme: ${data.mats?.join(", ")}. SADECE JSON: {"ozet":"150 kelime Türkçe proje özeti","odaYerlesimi":"100 kelime oda yerleşimi","oneri":"kısa öneri"}`;
+    const prompt=`Mimari proje özeti ve görsel prompt. Tip: ${data.type}, Alan: ${data.area}m², Kat: ${data.floors}, Stil: ${data.style}, Malzeme: ${data.mats?.join(", ")}. SADECE JSON: {"ozet":"150 kelime Türkçe proje özeti","odaYerlesimi":"100 kelime oda yerleşimi","oneri":"kısa öneri","mjPrompt":"Single detailed English sentence for DALL-E: architectural visualization, ${data.style} style, ${data.type}, ${data.area} sqm, ${data.floors} floors, materials ${(data.mats||[]).join(" and ")}, photorealistic, professional render, exterior view"}`;
     const out=await anthropicChat([{role:"user",content:prompt}],{max_tokens:1200});
-    if(out.ok) setRes(parseJsonSafe(out.data,{ozet:"",odaYerlesimi:"",oneri:""}));
-    else setRes({ozet:out.error,odaYerlesimi:"",oneri:""});
+    if(out.ok){const parsed=parseJsonSafe(out.data,{ozet:"",odaYerlesimi:"",oneri:"",mjPrompt:""});setRes(parsed);}
+    else setRes({ozet:out.error,odaYerlesimi:"",oneri:"",mjPrompt:""});
     setLoad(false);
   },[data]);
   const renderTab=()=>{
     const d=data;const r=res;
     switch(tabIdx){
-      case 0: return res?<div style={{padding:12,background:"#0a0c14",borderRadius:10,border:`1px solid ${brd}`}}><p style={{color:txt,fontSize:12,lineHeight:1.8}}>{r.ozet}</p></div>:<div style={{textAlign:"center",padding:24}}><p style={{color:sub,marginBottom:12}}>Önce &quot;AI ile Üret&quot; ile konsept oluşturun.</p><button onClick={genAI} disabled={load} style={{padding:"12px 24px",borderRadius:10,background:load?"#1c1f33":`linear-gradient(135deg,${gold},#b8892a)`,color:load?sub:"#080810",fontWeight:700,border:"none",cursor:"pointer"}}>{load?t.generating:t.generate}</button></div>;
+      case 0: return res?<div><div style={{padding:12,background:"#0a0c14",borderRadius:10,border:`1px solid ${brd}`,marginBottom:12}}><p style={{color:txt,fontSize:12,lineHeight:1.8}}>{r.ozet}</p></div>{generatedImageUrl&&<div style={{marginBottom:12}}><img src={generatedImageUrl} alt="AI görsel" style={{width:"100%",maxWidth:600,borderRadius:12,border:`1px solid ${brd}`}}/></div>}{!hasApiKey()?<p style={{color:sub,fontSize:11,marginBottom:8}}>🖼️ Görsel için 🔑 menüsünden API anahtarını girin (Claude).</p>:<><button onClick={async()=>{const prompt=r.mjPrompt||r.ozet||"";if(!prompt)return;setImageLoad(true);setImageError(null);const out=await generateImage(prompt);setImageLoad(false);if(out.ok){setGeneratedImageUrl(out.url);}else setImageError(out.error);}} disabled={imageLoad} style={{padding:"10px 20px",borderRadius:10,background:imageLoad?"#1c1f33":`linear-gradient(135deg,#10a37f,#0d8a6a)`,color:imageLoad?sub:"#fff",fontWeight:700,border:"none",cursor:"pointer",marginBottom:8}}>{imageLoad?"⏳ Görsel üretiliyor (Claude)...":"🖼️ Görsel üret (Claude)"}</button>{imageError&&<p style={{color:"#ff8888",fontSize:12,marginTop:8}}>{imageError}</p>}</>}</div>:<div style={{textAlign:"center",padding:24}}><p style={{color:sub,marginBottom:12}}>Önce &quot;AI ile Üret&quot; ile konsept oluşturun.</p><button onClick={genAI} disabled={load} style={{padding:"12px 24px",borderRadius:10,background:load?"#1c1f33":`linear-gradient(135deg,${gold},#b8892a)`,color:load?sub:"#080810",fontWeight:700,border:"none",cursor:"pointer"}}>{load?t.generating:t.generate}</button></div>;
       case 1: return <FloorPlan data={d} res={r} bp={bp}/>;
       case 2: return <Moodboard data={d}/>;
       case 3: return <Building3D data={d}/>;
@@ -776,7 +779,7 @@ function App(){
       case 8: return <FireEscape data={d}/>;
       case 9: return <TechDraw data={d}/>;
       case 10: return <Accessibility data={d}/>;
-      case 11: return res?<div style={{padding:12}}><p style={{color:goldL,fontSize:11,marginBottom:8}}>🖼️ Render prompt (Midjourney/DALL·E)</p><p style={{color:txt,fontSize:12}}>{res.mjPrompt||r.ozet}</p></div>:null;
+      case 11: return res?<div style={{padding:12}}><p style={{color:goldL,fontSize:11,marginBottom:8}}>🖼️ Görsel prompt (Claude SVG)</p><p style={{color:txt,fontSize:12,marginBottom:12}}>{r.mjPrompt||r.ozet}</p>{!hasApiKey()?<p style={{color:sub,fontSize:11}}>Görsel için 🔑 menüsünden API anahtarını girin (Claude).</p>:<><button onClick={async()=>{const prompt=r.mjPrompt||r.ozet||"";if(!prompt)return;setImageLoad(true);setImageError(null);const out=await generateImage(prompt);setImageLoad(false);if(out.ok){setGeneratedImageUrl(out.url);}else setImageError(out.error);}} disabled={imageLoad} style={{padding:"10px 20px",borderRadius:10,background:imageLoad?"#1c1f33":"linear-gradient(135deg,#10a37f,#0d8a6a)",color:imageLoad?sub:"#fff",fontWeight:700,border:"none",cursor:"pointer",marginBottom:8}}>{imageLoad?"⏳ Üretiliyor (Claude)...":"🖼️ Görsel üret (Claude)"}</button>{imageError&&<p style={{color:"#ff8888",fontSize:12,marginTop:8}}>{imageError}</p>}{generatedImageUrl&&<div style={{marginTop:12}}><img src={generatedImageUrl} alt="Mimari görsel" style={{width:"100%",maxWidth:640,borderRadius:12,border:`1px solid ${brd}`}}/></div>}</>}</div>:null;
       case 12: return <CostCalcFull data={d}/>;
       case 13: return <AIAlts data={d}/>;
       case 14: return <SunSim data={d}/>;
@@ -841,10 +844,10 @@ function App(){
     {showLoadModal&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.8)",zIndex:999,display:"flex",alignItems:"center",justifyContent:"center"}} onClick={()=>setShowLoadModal(false)}><div style={{background:card,border:`1px solid ${brd}`,borderRadius:12,padding:20,minWidth:360,maxHeight:"70vh",overflow:"auto"}} onClick={e=>e.stopPropagation()}><h3 style={{margin:"0 0 12px",color:goldL,fontSize:14}}>Proje yükle</h3>{projectsList.length===0?<p style={{color:sub,fontSize:12}}>Kayıtlı proje yok. Önce Kaydet ile kaydedin.</p>:<ul style={{listStyle:"none",padding:0,margin:0}}>{projectsList.map(p=><li key={p.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:`1px solid ${brd}`}}><button onClick={()=>handleLoad(p.id)} style={{flex:1,textAlign:"left",background:"none",border:"none",color:txt,cursor:"pointer",fontSize:13}}>{p.name}</button><span style={{color:sub,fontSize:10}}>{new Date(p.date).toLocaleDateString("tr-TR")}</span><button onClick={e=>{e.stopPropagation();deleteProject(p.id);setProjectsList(listProjects());}} style={{padding:"4px 8px",background:"#1a0808",border:"1px solid #3a1010",color:"#ff6b6b",borderRadius:6,cursor:"pointer",fontSize:11}}>Sil</button></li>)}</ul>}<button onClick={()=>setShowLoadModal(false)} style={{marginTop:12,padding:"8px 16px",borderRadius:8,background:card,border:`1px solid ${brd}`,color:txt,cursor:"pointer"}}>Kapat</button></div></div>}
     {showApiKeyModal&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.85)",zIndex:999,display:"flex",alignItems:"center",justifyContent:"center"}} onClick={()=>setShowApiKeyModal(false)}><div style={{background:card,border:`1px solid ${brd}`,borderRadius:12,padding:20,minWidth:340}} onClick={e=>e.stopPropagation()}>
       <h3 style={{margin:"0 0 12px",color:goldL,fontSize:14}}>🔑 API anahtarı</h3>
-      <p style={{color:sub,fontSize:11,marginBottom:10}}>Anthropic API anahtarınızı değiştirebilir veya kaldırabilirsiniz. Tarayıcıda (bu cihazda) saklanır.</p>
-      <input type="password" value={apiKeyInput} onChange={e=>setApiKeyInput(e.target.value)} placeholder="Yeni anahtar (sk-ant-...)" style={{width:"100%",padding:"9px 12px",borderRadius:8,border:`1px solid ${brd}`,background:"#0a0c14",color:txt,fontSize:12,outline:"none",marginBottom:10}} />
+      <p style={{color:sub,fontSize:11,marginBottom:10}}>Anthropic (Claude) — metin ve görsel üretimi için tek anahtar. Tarayıcıda saklanır.</p>
+      <input type="password" value={apiKeyInput} onChange={e=>setApiKeyInput(e.target.value)} placeholder="sk-ant-..." style={{width:"100%",padding:"9px 12px",borderRadius:8,border:`1px solid ${brd}`,background:"#0a0c14",color:txt,fontSize:12,outline:"none",marginBottom:12}} />
       <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-        <button onClick={()=>{if(apiKeyInput.trim()){setApiKey(apiKeyInput.trim());setApiKeyInput("");setShowApiKeyModal(false);forceRefresh(n=>n+1);}}} style={{padding:"8px 16px",borderRadius:8,background:gold,color:"#080810",fontWeight:700,border:"none",cursor:"pointer"}}>Güncelle</button>
+        <button onClick={()=>{if(apiKeyInput.trim()){setApiKey(apiKeyInput.trim());setApiKeyInput("");setShowApiKeyModal(false);forceRefresh(n=>n+1);}}} style={{padding:"8px 16px",borderRadius:8,background:gold,color:"#080810",fontWeight:700,border:"none",cursor:"pointer"}}>Kaydet</button>
         <button onClick={()=>{clearApiKey();setApiKeyInput("");setShowApiKeyModal(false);forceRefresh(n=>n+1);}} style={{padding:"8px 16px",borderRadius:8,background:"#1a0808",border:"1px solid #3a1010",color:"#ff8888",cursor:"pointer"}}>Anahtarı kaldır</button>
         <button onClick={()=>setShowApiKeyModal(false)} style={{padding:"8px 16px",borderRadius:8,background:card,border:`1px solid ${brd}`,color:txt,cursor:"pointer"}}>Kapat</button>
       </div>

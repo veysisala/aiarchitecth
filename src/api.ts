@@ -104,3 +104,34 @@ export function parseJsonSafe<T>(raw: string, fallback: T): T {
     return fallback;
   }
 }
+
+// ─── Görsel üretimi (Claude ile SVG) ───
+export type ImageResult = { ok: true; url: string } | { ok: false; error: string };
+
+const SVG_SYSTEM = `You are an expert at creating minimal, professional SVG illustrations for architecture and interior design.
+Reply with exactly one valid SVG element: <svg>...</svg>.
+- No markdown, no code fences, no explanation before or after.
+- Use viewBox="0 0 400 300" or similar. Use simple shapes: rect, line, path, circle, polygon.
+- Clean, schematic style (floor plan, elevation or conceptual diagram). Single color strokes/fills.`;
+
+/** Claude ile mimari konsept için SVG görsel üretir; data URL olarak döner. */
+export async function generateImage(prompt: string): Promise<ImageResult> {
+  if (!getApiKey()) {
+    return { ok: false, error: "Görsel için API anahtarı gerekli (🔑 menüden Anthropic)." };
+  }
+  const userContent = `Generate a single SVG illustration for this architectural concept. Output only the SVG code, no markdown, no explanation.\n\nConcept: ${prompt.slice(0, 3000)}`;
+  const out = await anthropicChat(
+    [{ role: "user", content: userContent }],
+    { system: SVG_SYSTEM, max_tokens: 2500 }
+  );
+  if (!out.ok) return { ok: false, error: out.error };
+  let raw = (out.data || "").trim();
+  const codeBlock = /```(?:svg)?\s*([\s\S]*?)```/i.exec(raw);
+  if (codeBlock) raw = codeBlock[1].trim();
+  if (!raw.includes("<svg")) return { ok: false, error: "Claude görsel (SVG) üretemedi." };
+  const start = raw.indexOf("<svg");
+  const end = raw.lastIndexOf("</svg>") + 6;
+  const svg = start >= 0 && end > start ? raw.slice(start, end) : raw;
+  const dataUrl = "data:image/svg+xml," + encodeURIComponent(svg);
+  return { ok: true, url: dataUrl };
+}
